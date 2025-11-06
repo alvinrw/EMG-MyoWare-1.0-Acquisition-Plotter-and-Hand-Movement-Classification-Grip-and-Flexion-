@@ -1,4 +1,4 @@
-int sensorPin =34 ;
+int sensorPin =34;
 int sensorValue = 0;
 
 void setup() {

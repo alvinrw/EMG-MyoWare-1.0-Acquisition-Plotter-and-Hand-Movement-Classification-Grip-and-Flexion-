@@ -4,7 +4,7 @@ import csv
 
 port = "COM11"
 baud = 9600
-filename = "emg_data6-tekuk.csv"
+filename = "emg_data10-TekukA.csv"
 
 ser = serial.Serial(port, baud)
 time.sleep(2)

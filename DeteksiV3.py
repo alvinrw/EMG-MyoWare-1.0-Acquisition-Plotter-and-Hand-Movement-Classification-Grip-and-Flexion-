@@ -8,81 +8,128 @@ import os
 import sys
 
 # ====================================================================
-# THRESHOLD KONFIGURASI - UBAH SESUAI KEBUTUHAN
+# THRESHOLD KONFIGURASI - DARI HASIL ANALISIS
 # ====================================================================
 
-# Threshold untuk klasifikasi WAMP
-WAMP_THRESHOLD_TEKUK = 137  # Jika WAMP > ini → TEKUK
-WAMP_THRESHOLD_GENGGAM = 135  # Jika WAMP < ini → GENGGAM
+# THRESHOLD VAR (Variance) - FITUR TERBAIK (Score: 1.0000)
+VAR_RELAKS_MAX = 50000        # VAR < ini → RELAKS
+VAR_TEKUK_MAX = 500000        # VAR < ini (tapi > RELAKS) → TEKUK
+                               # VAR > ini → GENGGAM
 
-# Threshold untuk deteksi RELAKSASI (sinyal sangat lemah)
-RELAKSASI_WAMP_MAX = 120      # WAMP dibawah ini = RELAKSASI
+# THRESHOLD SSC (Slope Sign Change) - FITUR KEDUA TERBAIK (Score: 0.7138)
+SSC_RELAKS_MIN = 85           # SSC > ini → bukan RELAKS
+SSC_GENGGAM_MAX = 60          # SSC < ini → cenderung GENGGAM
+SSC_TEKUK_MIN = 60            # SSC > ini → cenderung TEKUK/RELAKS
+
+# THRESHOLD WL (Waveform Length) - FITUR KETIGA TERBAIK (Score: 0.6935)
+WL_RELAKS_MAX = 11000         # WL < ini → cenderung RELAKS
+WL_GENGGAM_MIN = 13000        # WL > ini → cenderung GENGGAM/TEKUK
 
 # Parameter windowing
-WINDOW_SIZE = 150            # Ukuran window (sample) - 0.75 detik @ 200Hz
-OVERLAP_PERCENTAGE = 75      # Overlap untuk realtime (0-99%)
-SAMPLING_RATE = 200          # Hz
+WINDOW_SIZE = 50              # Ukuran window (sample) - 0.25 detik @ 200Hz
+OVERLAP_PERCENTAGE = 50       # Overlap untuk realtime (0-99%)
+SAMPLING_RATE = 200           # Hz
+MIN_WINDOW_PERCENT = 0.8      # Minimal 80% dari window size untuk diproses
 
 # Parameter Serial (untuk Mode Realtime)
-DEFAULT_PORT = "COM11"       # Port default
-BAUD_RATE = 9600            # Baud rate
-
-# Parameter WAMP (threshold untuk mendeteksi perubahan signifikan)
-WAMP_AMPLITUDE_THRESHOLD = 15  # Selisih minimal untuk dihitung sebagai "perubahan"
+DEFAULT_PORT = "COM11"        # Port default
+BAUD_RATE = 9600             # Baud rate
 
 # ====================================================================
-# FUNGSI EKSTRAKSI FITUR - WAMP ONLY
+# FUNGSI EKSTRAKSI FITUR - TOP 3 FEATURES
 # ====================================================================
 
-def extract_wamp(signal, threshold=15):
+def extract_features(signal):
     """
-    Menghitung WAMP (Willison Amplitude) - SATU-SATUNYA FITUR.
+    Ekstrak 3 fitur terbaik: VAR, SSC, WL
     
-    WAMP = jumlah perubahan amplitudo yang signifikan (≥ threshold)
-    
-    Args:
-        signal: Array nilai ADC
-        threshold: Threshold perubahan amplitudo (default: 15)
-    
-    Returns: 
-        WAMP value (integer)
+    Returns: dict dengan keys 'VAR', 'SSC', 'WL'
     """
-    if len(signal) < 2:
-        return 0
+    if len(signal) < 3:
+        return {'VAR': 0, 'SSC': 0, 'WL': 0}
     
-    # Hitung selisih antar sample berurutan
-    diff = np.abs(np.diff(signal))
+    # 1. VARIANCE (VAR) - FITUR TERBAIK
+    var = np.var(signal)
     
-    # Hitung berapa kali selisih ≥ threshold
-    wamp = np.sum(diff >= threshold)
+    # 2. SLOPE SIGN CHANGE (SSC) - FITUR KEDUA TERBAIK
+    threshold_ssc = 5
+    ssc = np.sum(np.logical_and(
+        (signal[1:-1] > signal[0:-2]) & (signal[1:-1] > signal[2:]),
+        np.abs(signal[1:-1] - signal[0:-2]) > threshold_ssc
+    )) + np.sum(np.logical_and(
+        (signal[1:-1] < signal[0:-2]) & (signal[1:-1] < signal[2:]),
+        np.abs(signal[1:-1] - signal[0:-2]) > threshold_ssc
+    ))
     
-    return wamp
+    # 3. WAVEFORM LENGTH (WL) - FITUR KETIGA TERBAIK
+    wl = np.sum(np.abs(np.diff(signal)))
+    
+    return {
+        'VAR': var,
+        'SSC': ssc,
+        'WL': wl
+    }
 
 # ====================================================================
-# FUNGSI KLASIFIKASI (RULE-BASED - WAMP ONLY)
+# FUNGSI KLASIFIKASI (RULE-BASED - 3 FITUR TERBAIK)
 # ====================================================================
 
-def classify_emg(wamp):
+def classify_emg(features):
     """
-    Klasifikasi EMG berdasarkan WAMP saja.
+    Klasifikasi EMG berdasarkan VAR, SSC, dan WL.
     
-    Returns: 
-        - "RELAKSASI" jika WAMP sangat rendah (sinyal lemah)
-        - "TEKUK" jika WAMP tinggi (gerakan dinamis)
-        - "GENGGAM" jika WAMP rendah-sedang (kontraksi statis)
+    Logika prioritas:
+    1. VAR (paling berpengaruh) - deteksi GENGGAM vs lainnya
+    2. SSC (sangat berpengaruh) - deteksi RELAKS vs TEKUK
+    3. WL (konfirmasi tambahan)
+    
+    Returns: tuple (prediction, confidence_score)
     """
+    var = features['VAR']
+    ssc = features['SSC']
+    wl = features['WL']
     
-    # 1. CEK RELAKSASI (sinyal sangat lemah)
-    if wamp < RELAKSASI_WAMP_MAX:
-        return "RELAKSASI"
+    # Counter voting untuk confidence
+    votes = {'GENGGAM': 0, 'RELAKS': 0, 'TEKUK': 0}
     
-    # 2. KLASIFIKASI UTAMA BERDASARKAN WAMP
-    # WAMP tinggi = banyak perubahan amplitudo = TEKUK (dinamis)
-    # WAMP rendah = perubahan amplitudo sedikit = GENGGAM (statis)
-    if wamp > WAMP_THRESHOLD_TEKUK:
-        return "TEKUK"
+    # ==== DETEKSI BERDASARKAN VAR (Bobot: 3 poin - fitur terbaik) ====
+    if var > VAR_TEKUK_MAX:
+        votes['GENGGAM'] += 3
+    elif var < VAR_RELAKS_MAX:
+        votes['RELAKS'] += 3
     else:
-        return "GENGGAM"
+        votes['TEKUK'] += 3
+    
+    # ==== DETEKSI BERDASARKAN SSC (Bobot: 2 poin - fitur kedua) ====
+    if ssc > SSC_RELAKS_MIN:
+        # SSC tinggi = banyak perubahan slope = RELAKS atau TEKUK
+        if ssc > 80:
+            votes['RELAKS'] += 2
+        else:
+            votes['TEKUK'] += 2
+    else:
+        # SSC rendah = perubahan slope sedikit = GENGGAM
+        votes['GENGGAM'] += 2
+    
+    # ==== DETEKSI BERDASARKAN WL (Bobot: 1 poin - fitur ketiga) ====
+    if wl > WL_GENGGAM_MIN:
+        # WL tinggi = total perubahan amplitudo besar
+        votes['GENGGAM'] += 1
+        votes['TEKUK'] += 1  # TEKUK juga bisa WL tinggi
+    elif wl < WL_RELAKS_MAX:
+        # WL rendah = perubahan amplitudo kecil
+        votes['RELAKS'] += 1
+    else:
+        # WL sedang
+        votes['TEKUK'] += 1
+    
+    # ==== FINAL DECISION ====
+    # Pilih kelas dengan vote tertinggi
+    prediction = max(votes, key=votes.get)
+    max_votes = votes[prediction]
+    confidence = (max_votes / 6.0) * 100  # Total bobot maksimal = 6
+    
+    return prediction, confidence
 
 # ====================================================================
 # MODE 1: PREDIKSI DARI FILE REKAMAN
@@ -90,11 +137,11 @@ def classify_emg(wamp):
 
 def process_file_mode():
     """
-    Mode 1: Load file CSV, ekstrak WAMP per window, prediksi, simpan hasil.
+    Mode 1: Load file CSV, ekstrak fitur per window, prediksi, simpan hasil.
     """
-    print("\n" + "="*60)
+    print("\n" + "="*70)
     print("MODE 1: PREDIKSI DARI FILE REKAMAN")
-    print("="*60)
+    print("="*70)
     
     # Input nama file
     print("\nMasukkan path file CSV (atau tekan Enter untuk file dialog):")
@@ -123,6 +170,12 @@ def process_file_mode():
             return
         
         signal = df['Nilai ADC'].values
+        
+        # Buang 10 baris pertama (sensor sensitif)
+        if len(signal) > 10:
+            signal = signal[10:]
+            print(f"⚠️  Membuang 10 sample pertama (sensor sensitif)")
+        
         print(f"✓ Data loaded: {len(signal)} samples")
         
     except Exception as e:
@@ -136,14 +189,14 @@ def process_file_mode():
     for i in range(0, len(signal), WINDOW_SIZE):
         window = signal[i:i + WINDOW_SIZE]
         
-        if len(window) < WINDOW_SIZE * 0.5:  # Skip jika window terlalu kecil
+        if len(window) < WINDOW_SIZE * MIN_WINDOW_PERCENT:  # Skip jika window terlalu kecil
             continue
         
-        # Ekstrak WAMP
-        wamp = extract_wamp(window, threshold=WAMP_AMPLITUDE_THRESHOLD)
+        # Ekstrak fitur
+        features = extract_features(window)
         
         # Klasifikasi
-        prediction = classify_emg(wamp)
+        prediction, confidence = classify_emg(features)
         
         # Simpan hasil
         results.append({
@@ -151,10 +204,13 @@ def process_file_mode():
             'Start_Sample': i,
             'End_Sample': min(i + WINDOW_SIZE, len(signal)),
             'Prediksi': prediction,
-            'WAMP': wamp
+            'Confidence': f"{confidence:.1f}%",
+            'VAR': features['VAR'],
+            'SSC': features['SSC'],
+            'WL': features['WL']
         })
         
-        print(f"  Window {len(results)}: {prediction:10s} (WAMP={wamp})")
+        print(f"  Window {len(results):2d}: {prediction:8s} ({confidence:5.1f}%) | VAR={features['VAR']:10.0f} SSC={features['SSC']:3.0f} WL={features['WL']:6.0f}")
     
     # Simpan hasil ke CSV
     if results:
@@ -166,18 +222,19 @@ def process_file_mode():
         print(f"📊 Hasil disimpan ke: {output_file}")
         
         # Tampilkan ringkasan
-        print("\n📈 RINGKASAN:")
-        for pred_type in ['GENGGAM', 'TEKUK', 'RELAKSASI']:
+        print("\n📈 RINGKASAN PREDIKSI:")
+        for pred_type in ['GENGGAM', 'RELAKS', 'TEKUK']:
             count = len(results_df[results_df['Prediksi'] == pred_type])
             percentage = (count / len(results_df)) * 100
-            print(f"   {pred_type}: {count} windows ({percentage:.1f}%)")
+            print(f"   {pred_type:8s}: {count:3d} windows ({percentage:5.1f}%)")
         
-        # Statistik WAMP
-        print("\n📊 STATISTIK WAMP:")
-        print(f"   Min  : {results_df['WAMP'].min()}")
-        print(f"   Max  : {results_df['WAMP'].max()}")
-        print(f"   Mean : {results_df['WAMP'].mean():.2f}")
-        print(f"   Median: {results_df['WAMP'].median():.2f}")
+        # Statistik fitur
+        print("\n📊 STATISTIK FITUR:")
+        for feat in ['VAR', 'SSC', 'WL']:
+            print(f"\n   {feat}:")
+            print(f"      Min  : {results_df[feat].min():.2f}")
+            print(f"      Max  : {results_df[feat].max():.2f}")
+            print(f"      Mean : {results_df[feat].mean():.2f}")
     else:
         print("\n⚠️ Tidak ada data yang berhasil diproses")
 
@@ -189,9 +246,9 @@ def process_realtime_mode():
     """
     Mode 2: Baca data dari serial, buffer per window, prediksi realtime.
     """
-    print("\n" + "="*60)
+    print("\n" + "="*70)
     print("MODE 2: PREDIKSI REALTIME DARI SERIAL")
-    print("="*60)
+    print("="*70)
     
     # Input port
     port_input = input(f"\nMasukkan COM port (default: {DEFAULT_PORT}): ").strip()
@@ -217,17 +274,21 @@ def process_realtime_mode():
     
     print(f"\n💾 Logging ke: {output_file}")
     print(f"🔧 Window: {WINDOW_SIZE}, Overlap: {OVERLAP_PERCENTAGE}%")
-    print(f"🎯 Threshold: TEKUK>{WAMP_THRESHOLD_TEKUK}, RELAKSASI<{RELAKSASI_WAMP_MAX}")
-    print(f"\n{'='*60}")
+    print(f"🎯 Fitur: VAR (primary), SSC, WL")
+    print(f"\n{'='*70}")
     print("🚀 MULAI MONITORING - Tekan Ctrl+C untuk stop")
-    print(f"{'='*60}\n")
+    print(f"{'='*70}\n")
     
     window_count = 0
+    
+    # Buang 10 sample pertama
+    skip_count = 0
+    skip_samples = 10
     
     try:
         with open(output_file, 'w', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow(['Timestamp', 'Window', 'Prediksi', 'WAMP'])
+            writer.writerow(['Timestamp', 'Window', 'Prediksi', 'Confidence', 'VAR', 'SSC', 'WL'])
             
             while True:
                 try:
@@ -236,6 +297,12 @@ def process_realtime_mode():
                     
                     if line.isdigit():
                         adc_value = int(line)
+                        
+                        # Skip 10 sample pertama
+                        if skip_count < skip_samples:
+                            skip_count += 1
+                            continue
+                        
                         buffer.append(adc_value)
                         
                         # Jika buffer sudah cukup untuk 1 window
@@ -243,25 +310,29 @@ def process_realtime_mode():
                             # Ambil window
                             window = np.array(buffer[:WINDOW_SIZE])
                             
-                            # Ekstrak WAMP
-                            wamp = extract_wamp(window, threshold=WAMP_AMPLITUDE_THRESHOLD)
+                            # Ekstrak fitur
+                            features = extract_features(window)
                             
                             # Klasifikasi
-                            prediction = classify_emg(wamp)
+                            prediction, confidence = classify_emg(features)
                             window_count += 1
                             
                             # Timestamp
                             timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
                             
-                            # Tampilkan hasil
-                            print(f"[{timestamp}] Window {window_count}: {prediction:10s} | WAMP={wamp:4d}")
+                            # Tampilkan hasil (dengan warna)
+                            conf_str = f"{confidence:5.1f}%"
+                            print(f"[{timestamp}] Window {window_count:3d}: {prediction:8s} ({conf_str}) | VAR={features['VAR']:10.0f} SSC={features['SSC']:3.0f} WL={features['WL']:6.0f}")
                             
                             # Simpan ke CSV
                             writer.writerow([
                                 timestamp,
                                 window_count,
                                 prediction,
-                                wamp
+                                f"{confidence:.1f}",
+                                f"{features['VAR']:.2f}",
+                                features['SSC'],
+                                f"{features['WL']:.2f}"
                             ])
                             f.flush()  # Force write ke file
                             
@@ -272,15 +343,17 @@ def process_realtime_mode():
                     continue  # Skip jika ada error decoding
                     
     except KeyboardInterrupt:
-        print(f"\n\n{'='*60}")
+        print(f"\n\n{'='*70}")
         print("⏹️  MONITORING DIHENTIKAN")
-        print(f"{'='*60}")
+        print(f"{'='*70}")
         print(f"✅ Total {window_count} windows diproses")
         print(f"💾 Data tersimpan di: {output_file}")
         
     finally:
         ser.close()
         print("🔌 Serial port ditutup")
+
+
 
 # ====================================================================
 # MENU UTAMA
@@ -291,21 +364,20 @@ def main():
     Menu utama program.
     """
     while True:
-        print("\n" + "="*60)
-        print("     KLASIFIKASI EMG - GENGGAM VS TEKUK")
-        print("         (WAMP-Only Classifier)")
-        print("="*60)
-        print("\n📊 KONFIGURASI SAAT INI:")
-        print(f"   • WAMP > {WAMP_THRESHOLD_TEKUK} → TEKUK")
-        print(f"   • WAMP < {WAMP_THRESHOLD_GENGGAM} → GENGGAM")
-        print(f"   • WAMP < {RELAKSASI_WAMP_MAX} → RELAKSASI")
-        print(f"   • Window Size: {WINDOW_SIZE} samples")
-        print("="*60)
+        print("\n" + "="*70)
+        print("       KLASIFIKASI EMG - 3 GERAKAN TANGAN")
+        print("    (VAR + SSC + WL - Based on Analysis Results)")
+        print("="*70)
+        print("\n📊 KONFIGURASI THRESHOLD SAAT INI:")
+        print(f"   VAR:  RELAKS < {VAR_RELAKS_MAX:,}  |  TEKUK < {VAR_TEKUK_MAX:,}  |  GENGGAM ≥ {VAR_TEKUK_MAX:,}")
+        print(f"   SSC:  GENGGAM < {SSC_GENGGAM_MAX}  |  TEKUK/RELAKS ≥ {SSC_TEKUK_MIN}")
+        print(f"   WL :  RELAKS < {WL_RELAKS_MAX:,}  |  GENGGAM/TEKUK ≥ {WL_GENGGAM_MIN:,}")
+        print("="*70)
         print("\nPILIH MODE:")
         print("  1. Prediksi dari File Rekaman (CSV)")
         print("  2. Prediksi Realtime dari Serial")
         print("  3. Keluar")
-        print("="*60)
+        print("="*70)
         
         choice = input("\nPilihan (1/2/3): ").strip()
         
