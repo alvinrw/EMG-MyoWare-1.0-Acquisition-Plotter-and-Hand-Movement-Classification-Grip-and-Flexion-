@@ -1,157 +1,116 @@
-# Project Myoware 1.0: Grip and Flexion Classification
+# Project Myoware 1.0: Grip and Flexion Classification ✋💪
 
 ## 1. Project Description
 
-This project aims to develop a minimalist hand movement classification system, focusing on two main motion classes: **Grip (Genggam)** and **Flexion (Tekuk/Fleksi)**.
+This project aims to develop a minimalist, single-channel **Electromyography (EMG)**-based hand movement classification system.  
+It focuses on classifying three main movement classes:  
+**Grip (Genggam)**, **Flexion (Tekuk/Fleksi)**, and **Relaxation (Relaks)**.
 
-The system utilizes one Myoware Electromyography (EMG) sensor strategically placed on the **Flexor Carpi Radialis (FCR)** muscle. The EMG signal data is acquired, features are extracted, and then classified using a threshold-based algorithm for simple yet effective real-time classification.
-
-![Uploading image.png…]()
-
+The system utilizes one **Myoware EMG sensor** strategically placed on the **Flexor Carpi Radialis (FCR)** muscle.  
+The process involves EMG signal data acquisition, feature extraction (Time Domain), and real-time classification using a **single-feature threshold-based algorithm** for simplicity and effectiveness.
 
 ---
 
 ## 2. Project Structure
 
-The project repository is structured as follows:
+The project repository is organized as follows:
+
+
 
 ```
 ├── BIOMED/
-│   ├── Data_Genggam/            # Raw data files for the "Grip" class
-│   ├── Data_Tekuk/              # Raw data files for the "Flexion" class
-│   └── Data_Irrelevant/         # Miscellaneous or corrupted data (not used for training)
-├── Code_arduino/
-│   └── Kode.ino                 # Firmware for the microcontroller (Arduino)
-├── Akusisi_Data.py              # Script for data acquisition from Myoware
-├── Cari_Fitur.py                # Script for feature analysis and selection
-├── DeteksiV1.py                 # Initial classification model (Multi-feature approach)
-├── DeteksiV2.py                 # Final classification model (Single-feature WAMP approach)
-├── Plotter_data.py              # General script for visualizing processed data
-├── plotter_data(analog).py      # Script for visualizing raw ADC signal data
-├── feature_distribution_comparison.png
-├── feature_distribution_comparison_new_features.png
-├── feature_importance_analysis.png
-├── feature_importance_analysis_new_features.png
-└── tempCodeRunnerFile.py
+│ ├── Code_arduino/ # Microcontroller Firmware (Kode.ino)
+│ ├── Data_test/ # Test data organized by movement (GENGGAM, RELAKS, TEKUK)
+│ ├── DETEKSI_FITUR/ # Data used for feature analysis and training
+│ └── HASIL/ # Output folder for classification results (plots, summaries)
+│
+├── Akusisi_Data.py # Script for real-time data acquisition from Myoware
+├── Cari_fitur.py # Script for feature analysis and selection
+├── Deteksi.py # Final classification model (Single-feature VAR approach)
+├── feature_ranking.csv # Result of feature ranking from Cari_fitur.py
+├── feature_ranking.png # Visualization of feature ranking
+└── README.md
 ```
 
+---
 ---
 
 ## 3. Core Code Explanation
 
-### 3.1. Code_arduino/Kode.ino
-
-This is the firmware designed for the microcontroller (e.g., Arduino Uno/Nano).
+### 3.1. `Code_arduino/Kode.ino` (Firmware)
 
 | Component | Description |
 |-----------|-------------|
 | **Function** | Reads the analog signal output directly from the Myoware sensor |
-| **Process** | Converts the analog voltage into a digital ADC Value (typically 0-1023) |
+| **Process** | Converts the analog voltage into a digital **ADC Value** (typically 0–1023 or 0–4095 depending on ADC resolution) |
 | **Output** | Sends the raw ADC values continuously to the connected computer via the serial port |
 
 ---
 
-### 3.2. Akusisi_Data.py
+### 3.2. `Akusisi_Data.py` (Data Acquisition)
 
-This file is responsible for real-time data collection from the Myoware sensor.
+This script manages real-time EMG data collection from the Myoware sensor via the serial port.
 
 | Component | Description |
 |-----------|-------------|
 | **Main Function** | Reads serial data from the port connected to the Arduino (e.g., COM11) |
-| **Process** | Parses the incoming digital ADC values and records them |
-| **Output** | Saves the EMG data into CSV files (e.g., `emg_data6-tekuk.csv`), including timestamp and the raw ADC Value |
-| **Dependencies** | `serial`, `time`, `csv` |
+| **Output** | Saves EMG data into CSV files (e.g., `emg_data_tekuk.csv`), including timestamp and raw **ADC Value** |
+| **Dependencies** | `pyserial`, `time`, `csv` |
 
 ---
 
-### 3.3. Cari_Fitur.py (Feature Analysis)
+### 3.3. `Cari_fitur.py` (Feature Analysis)
 
-This script is the core analysis step, designed to determine which statistical features (Time Domain - TD and Frequency Domain - FD) are most effective at distinguishing between Grip and Flexion movements.
+This script analyzes the effectiveness of various time-domain statistical features in distinguishing between the movements.
 
-#### Extracted Features (per Window):
+#### 🧩 Key Feature Importance (from `feature_ranking.csv`)
 
-| Feature | Domain | Description |
-|---------|--------|-------------|
-| **RMS** | TD | Root Mean Square |
-| **MAV** | TD | Mean Absolute Value |
-| **VAR** | TD | Variance |
-| **ZC** | TD | Zero Crossing |
-| **SSC** | TD | Slope Sign Change |
-| **WL** | TD | Waveform Length |
-| **WAMP** | TD | Willison Amplitude |
-| **MNF** | FD | Mean Frequency |
-| **MDF** | FD | Median Frequency |
+Based on the combined score, the **Variance (VAR)** feature is the most significant for this classification task.
 
-#### Key Feature Importance Results:
-
-Based on the **Combined Score** (aggregating Random Forest Importance, Mutual Information Score, and Cohen's d Separation Score), the **WAMP (Willison Amplitude)** feature is the most significant for this classification task.
-
-| Rank | Feature | Combined Score | RF Importance | Separation Score |
-|------|---------|----------------|---------------|------------------|
-| 🏆 **1** | **WAMP** | 1.0000 | 0.2034 | 2.1322 |
-| 🏆 **2** | **MNF** | 0.7434 | 0.1616 | 1.6064 |
-| 🏆 **3** | **SSC** | 0.5969 | 0.0772 | 1.3167 |
+| Rank | Feature | Final Score |
+|------|----------|-------------|
+| 🏆 **1** | **VAR** | 0.6194 |
+| 🥈 2 | MAV | 0.4968 |
+| 🥉 3 | RMS | 0.3449 |
+| 4 | ZC | 0.3333 |
+| 5 | WL | 0.2428 |
+| 6 | SSC | 0.2315 |
 
 ---
 
-### 3.4. Plotter_data.py & plotter_data(analog).py
+### 3.4. `Deteksi.py` (Final Classification Model)
 
-These files are used for data visualization. They load collected data from CSV files and display them in graphical form.
+This is the **final optimized classification code** that utilizes the single best feature — **VAR (Variance)** — for movement detection.
 
-- **Plotter_data.py**: General script for visualizing processed or feature data
-- **plotter_data(analog).py**: Specific script for plotting raw data, focusing the Y-axis on Analog Values (ADC) for signal inspection
+#### 🔍 Classification Concept: Single-Feature Thresholding (VAR)
 
----
+The script performs windowing on the raw ADC signal, extracts the VAR feature for each window, and classifies the movement based on empirical thresholds.
 
-### 3.5. DeteksiV1.py
+| State | Feature Range (VAR) |
+|:---:|:---:|
+| **RELAKS** | VAR < VAR_RELAKS_MAX (≈ 50,000) |
+| **TEKUK** | VAR_RELAKS_MAX ≤ VAR < VAR_TEKUK_MAX (≈ 500,000) |
+| **GENGGAM** | VAR ≥ VAR_TEKUK_MAX (≈ 500,000) |
 
-This is the initial version (V1) of the classification code.
+#### 🧾 Output Handling
 
-- **Approach**: Uses a broad range of Time-Domain features (RMS, MAV, VAR, ZC, etc.) for movement classification
-- **Purpose**: To serve as a baseline for testing the performance of the classification model before moving to a more optimized feature set
+After classification, the script automatically:
 
----
-
-### 3.6. DeteksiV2.py
-
-This is the **final, optimized classification code** based on the feature analysis results from `Cari_Fitur.py`.
-
-- **Approach**: Utilizes only the single best feature, **WAMP (Willison Amplitude)**, for classification
-
-#### Concept: Threshold Tuning
-
-Tuning is the empirical process of finding the most accurate boundary values (thresholds) to separate different classes.
-
-In this code, thresholds are tuned to distinguish between three states: **FLEXION**, **GRIP**, and **RELAXATION**.
-
-**Tuned Threshold Examples:**
-
-```python
-WAMP_THRESHOLD_TEKUK = 100      # If WAMP > this, classified as FLEXION
-WAMP_THRESHOLD_GENGGAM = 99     # If WAMP < this, classified as GRIP
-RELAKSASI_WAMP_MAX = 50         # WAMP below this is classified as RELAXATION
-```
+1. **Plots:**
+   - **ADC Value vs. Time**
+   - **Voltage vs. Time** (calculated as `Voltage = (ADC / 4095) × 3.3`)
+2. **Saves Results:**
+   - Creates a timestamped output folder:  
+     `HASIL/[DOMINANT_PREDICTION]/[TIMESTAMP]/`
+   - Saves:
+     - **Plots** (`*_PLOT_ADC.png`, `*_PLOT_VOLTAGE.png`)
+     - **Summary text file** (`Hasil_Prediksi.txt`) containing prediction counts and percentages
 
 ---
 
 ## 4. Requirements
 
-To run the Python scripts, you need the following libraries:
+Install all dependencies before running the scripts:
 
 ```bash
 pip install pyserial pandas numpy scikit-learn matplotlib
-```
-
----
-
-## 5. Usage
-
-1. **Upload Arduino Code**: Flash `Code_arduino/Kode.ino` to your Arduino board
-2. **Data Acquisition**: Run `Akusisi_Data.py` to collect EMG data
-3. **Feature Analysis**: Execute `Cari_Fitur.py` to analyze feature importance
-4. **Classification**: Use `DeteksiV2.py` for real-time movement classification
-
----
-
-
-**Note**: Ensure your Myoware sensor is properly connected to the Flexor Carpi Radialis muscle for optimal signal acquisition.
