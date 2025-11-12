@@ -1,0 +1,5 @@
+true_label,total_windows,correct_windows,class_accuracy_percent,pred_GENGGAM,pred_RELAKS,pred_TEKUK
+GENGGAM,13,7,53.84615384615385,7,2,4
+RELAKS,73,70,95.8904109589041,0,70,3
+TEKUK,15,9,60.0,2,4,9
+OVERALL,101,86,85.14851485148515,9,76,16
