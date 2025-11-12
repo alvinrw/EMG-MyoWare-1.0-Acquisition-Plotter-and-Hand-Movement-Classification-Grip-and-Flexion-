@@ -2,7 +2,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 # Ganti sesuai nama file CSV kamu
-filename = "emg_data10-TekukA.csv"
+filename = "GENGAM_NEW/emg_data3-GenggamA.csv"
 
 # Baca file CSV
 data = pd.read_csv(filename)
