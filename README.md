@@ -1,116 +1,150 @@
-# Project Myoware 1.0: Grip and Flexion Classification ✋💪
+# EMG Hand Movement Classification
 
-## 1. Project Description
+Single-channel EMG-based hand movement classification system using the MyoWare sensor. This project classifies three movement types: Grip (Genggam), Flexion (Tekuk), and Relaxation (Relaks).
 
-This project aims to develop a minimalist, single-channel **Electromyography (EMG)**-based hand movement classification system.  
-It focuses on classifying three main movement classes:  
-**Grip (Genggam)**, **Flexion (Tekuk/Fleksi)**, and **Relaxation (Relaks)**.
+## Overview
 
-The system utilizes one **Myoware EMG sensor** strategically placed on the **Flexor Carpi Radialis (FCR)** muscle.  
-The process involves EMG signal data acquisition, feature extraction (Time Domain), and real-time classification using a **single-feature threshold-based algorithm** for simplicity and effectiveness.
+The system uses a single MyoWare EMG sensor placed on the Flexor Carpi Radialis (FCR) muscle to capture electrical signals during hand movements. Classification is performed using a simple threshold-based algorithm on the variance feature extracted from the EMG signal.
 
----
-
-## 2. Project Structure
-
-The project repository is organized as follows:
-
-
+## Project Structure
 
 ```
-├── BIOMED/
-│ ├── Code_arduino/ # Microcontroller Firmware (Kode.ino)
-│ ├── Data_test/ # Test data organized by movement (GENGGAM, RELAKS, TEKUK)
-│ ├── DETEKSI_FITUR/ # Data used for feature analysis and training
-│ └── HASIL/ # Output folder for classification results (plots, summaries)
+biomed/
+├── Code_arduino/
+│   └── sketch_oct27a/
+│       └── sketch_oct27a.ino        # ESP32 firmware for data acquisition
 │
-├── Akusisi_Data.py # Script for real-time data acquisition from Myoware
-├── Cari_fitur.py # Script for feature analysis and selection
-├── Deteksi.py # Final classification model (Single-feature VAR approach)
-├── feature_ranking.csv # Result of feature ranking from Cari_fitur.py
-├── feature_ranking.png # Visualization of feature ranking
+├── scripts/
+│   ├── acquisition/
+│   │   └── Akusisi_Data.py          # Real-time data acquisition
+│   ├── analysis/
+│   │   ├── Cari_fitur.py            # Feature analysis and ranking
+│   │   └── Deteksi.py               # Classification model
+│   └── visualization/
+│       ├── Plottter_data.py         # ADC signal visualization
+│       └── plotter_data_voltage.py  # Voltage signal visualization
+│
+├── Data_test/                        # Test data by movement type
+│   ├── GENGGAM/
+│   ├── RELAKS/
+│   └── TEKUK/
+│
+├── DETEKSI_FITUR/                    # Training data for feature analysis
+│
+├── HASIL/                            # Classification output folder
+│   ├── genggam/
+│   ├── relaks/
+│   └── tekuk/
+│
+├── results/                          # Analysis results
+│   ├── feature_ranking.csv
+│   └── feature_ranking.png
+│
 └── README.md
 ```
 
----
----
+## Hardware Requirements
 
-## 3. Core Code Explanation
+- ESP32 microcontroller
+- MyoWare EMG sensor (v1.0)
+- USB cable for serial communication
 
-### 3.1. `Code_arduino/Kode.ino` (Firmware)
+## Software Requirements
 
-| Component | Description |
-|-----------|-------------|
-| **Function** | Reads the analog signal output directly from the Myoware sensor |
-| **Process** | Converts the analog voltage into a digital **ADC Value** (typically 0–1023 or 0–4095 depending on ADC resolution) |
-| **Output** | Sends the raw ADC values continuously to the connected computer via the serial port |
+Install dependencies using pip:
 
----
+```bash
+pip install pyserial pandas numpy scikit-learn matplotlib scipy
+```
 
-### 3.2. `Akusisi_Data.py` (Data Acquisition)
+## Usage
 
-This script manages real-time EMG data collection from the Myoware sensor via the serial port.
+### 1. Data Acquisition
 
-| Component | Description |
-|-----------|-------------|
-| **Main Function** | Reads serial data from the port connected to the Arduino (e.g., COM11) |
-| **Output** | Saves EMG data into CSV files (e.g., `emg_data_tekuk.csv`), including timestamp and raw **ADC Value** |
-| **Dependencies** | `pyserial`, `time`, `csv` |
+Connect the MyoWare sensor to ESP32 pin 34 and upload the Arduino sketch. Then run:
 
----
+```bash
+python scripts/acquisition/Akusisi_Data.py
+```
 
-### 3.3. `Cari_fitur.py` (Feature Analysis)
+This will record EMG data to a CSV file with timestamp and ADC values.
 
-This script analyzes the effectiveness of various time-domain statistical features in distinguishing between the movements.
+### 2. Feature Analysis
 
-#### 🧩 Key Feature Importance (from `feature_ranking.csv`)
+To analyze which features best distinguish between movements:
 
-Based on the combined score, the **Variance (VAR)** feature is the most significant for this classification task.
+```bash
+python scripts/analysis/Cari_fitur.py
+```
 
-| Rank | Feature | Final Score |
-|------|----------|-------------|
-| 🏆 **1** | **VAR** | 0.6194 |
-| 🥈 2 | MAV | 0.4968 |
-| 🥉 3 | RMS | 0.3449 |
+The script will prompt for folder paths containing training data for each movement type. Results show that variance (VAR) is the most discriminative feature.
+
+### 3. Classification
+
+To classify new EMG recordings:
+
+```bash
+python scripts/analysis/Deteksi.py
+```
+
+Enter the path to a CSV file when prompted. The script will:
+- Extract variance features from windowed segments
+- Classify each window as RELAKS, TEKUK, or GENGGAM
+- Generate plots of ADC values and voltage
+- Save results to `HASIL/[movement]/[filename_timestamp]/`
+
+### 4. Visualization
+
+To visualize recorded EMG data:
+
+```bash
+# Plot ADC values
+python scripts/visualization/Plottter_data.py
+
+# Plot voltage values
+python scripts/visualization/plotter_data_voltage.py
+```
+
+## Classification Method
+
+The system uses a single-feature threshold approach based on signal variance:
+
+| Movement | Variance Range |
+|----------|----------------|
+| RELAKS   | VAR < 50,000 |
+| TEKUK    | 50,000 ≤ VAR < 500,000 |
+| GENGGAM  | VAR ≥ 500,000 |
+
+These thresholds may need adjustment based on sensor calibration and individual subjects.
+
+## Feature Analysis Results
+
+Based on combined scoring from Random Forest importance, Mutual Information, and F-ANOVA:
+
+| Rank | Feature | Score |
+|------|---------|-------|
+| 1 | VAR | 0.6194 |
+| 2 | MAV | 0.4968 |
+| 3 | RMS | 0.3449 |
 | 4 | ZC | 0.3333 |
 | 5 | WL | 0.2428 |
 | 6 | SSC | 0.2315 |
 
----
+Results are saved in `results/` folder.
 
-### 3.4. `Deteksi.py` (Final Classification Model)
+## Output Files
 
-This is the **final optimized classification code** that utilizes the single best feature — **VAR (Variance)** — for movement detection.
+For each classification run, the system generates:
+- `Hasil_Prediksi.txt` - Summary of prediction counts and percentages
+- `[filename]_PLOT_ADC.png` - ADC value vs time plot
+- `[filename]_PLOT_VOLTAGE.png` - Voltage vs time plot
 
-#### 🔍 Classification Concept: Single-Feature Thresholding (VAR)
+## Notes
 
-The script performs windowing on the raw ADC signal, extracts the VAR feature for each window, and classifies the movement based on empirical thresholds.
+- The first 10 samples of each recording are automatically discarded to avoid initialization artifacts
+- Window size is set to 50 samples with 80% minimum overlap requirement
+- ADC values are converted to voltage using: `V = (ADC / 4095) × 3.3`
 
-| State | Feature Range (VAR) |
-|:---:|:---:|
-| **RELAKS** | VAR < VAR_RELAKS_MAX (≈ 50,000) |
-| **TEKUK** | VAR_RELAKS_MAX ≤ VAR < VAR_TEKUK_MAX (≈ 500,000) |
-| **GENGGAM** | VAR ≥ VAR_TEKUK_MAX (≈ 500,000) |
+## License
 
-#### 🧾 Output Handling
-
-After classification, the script automatically:
-
-1. **Plots:**
-   - **ADC Value vs. Time**
-   - **Voltage vs. Time** (calculated as `Voltage = (ADC / 4095) × 3.3`)
-2. **Saves Results:**
-   - Creates a timestamped output folder:  
-     `HASIL/[DOMINANT_PREDICTION]/[TIMESTAMP]/`
-   - Saves:
-     - **Plots** (`*_PLOT_ADC.png`, `*_PLOT_VOLTAGE.png`)
-     - **Summary text file** (`Hasil_Prediksi.txt`) containing prediction counts and percentages
-
----
-
-## 4. Requirements
-
-Install all dependencies before running the scripts:
-
-```bash
-pip install pyserial pandas numpy scikit-learn matplotlib
+This project is for educational and research purposes.
